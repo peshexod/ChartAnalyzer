@@ -1,0 +1,232 @@
+﻿@page "/fetchdata"
+@attribute [Authorize]
+
+@inject HttpClient Http
+@inject Repository Repo
+@inject IJSRuntime JsRuntime
+
+@using Chart
+
+@inject NavigationManager NavigationManager
+
+<PageTitle>Bright Assistant</PageTitle>
+
+<h1>Your sessions</h1>
+
+<div class="d-flex justify-content-center align-items-center">
+    <div id="mainSpinner" class="spinner-border text-primary" role="status" style="width: 8rem; height: 8rem;" hidden="@spinnerIsHidden">
+
+    </div>
+</div>
+<div id="container">
+    <div class="row">
+        <RadzenCard class="m-4" style="display: flex; flex-direction: column; gap: 0.5rem ">
+            <RadzenButton Text="Clear selected sessions" Click="@(args => OnClear())" />
+            <RadzenButton Text="Draw charts" Click="@(args => FillCharts())" />
+        </RadzenCard>
+        @*<div style="display: flex; flex-direction: row;">*@
+            <RadzenCard class="m-4 col" style="display: flex; flex-direction: column; gap: 0.5rem ">
+                @{
+                    firstSessionText = FirstSession != null ? "" : "not selected";
+                    <RadzenLabel Text="@("Session before: " + firstSessionText)" />
+                    <RadzenLabel Text="@("Begin time: " + FirstSession?.BeginTime ?? "")" />
+                    <RadzenLabel Text="@("End time: " + FirstSession?.EndTime ?? "")" />
+                    <RadzenLabel Text="@("Duration: " + FirstSession?.Duration ?? "")" />
+                    <RadzenLabel Text="@("Session state: " + FirstSession?.BasicModality ?? "")" />
+                    <RadzenLabel Text="@("Score: " + FirstSession?.Score ?? "")" />
+                    <RadzenLabel Text="@("Notes: " + FirstSession?.Note ?? "")" />
+                }
+            </RadzenCard>
+            <RadzenCard class="m-4 col" style="display: flex; flex-direction: column; gap: 0.5rem ">
+                @{
+                    secondSessionText = SecondSession != null ? "" : "not selected";
+                    <RadzenLabel Text="@("Session after: " + secondSessionText)" />
+                    <RadzenLabel Text="@("Begin time: " + SecondSession?.BeginTime ?? "")" />
+                    <RadzenLabel Text="@("End time: " + SecondSession?.EndTime ?? "")" />
+                    <RadzenLabel Text="@("Duration: " + SecondSession?.Duration ?? "")" />
+                    <RadzenLabel Text="@("Session state: " + SecondSession?.BasicModality ?? "")" />
+                    <RadzenLabel Text="@("Score: " + FirstSession?.Score ?? "")" />
+                    <RadzenLabel Text="@("Notes: " + SecondSession?.Note ?? "")" />
+                }
+            </RadzenCard>
+        @*</div>*@
+        <RadzenCard class="m-4" style="display: flex; flex-direction: column; gap: 0.5rem ">
+            <RadzenLabel Text="Choose sessions below:" />
+            <RadzenDataGrid @ref="grid" AllowFiltering="true" FilterPopupRenderMode="PopupRenderMode.OnDemand" FilterCaseSensitivity="FilterCaseSensitivity.CaseInsensitive" AllowPaging="true" PageSize="20"
+                            AllowSorting="true" Data="@Sessions" TItem="Session" ColumnWidth="200px"
+                            class="m-4">
+                <Columns>
+                    <RadzenDataGridColumn Title="Before" TItem="Session" Width="60px" Sortable="false" Filterable="false">
+                        <Template Context="data">
+                            <RadzenCheckBox TriState="false" Value="@(data == FirstSession)"
+                                            TValue="bool" Change=@(args => OnSelect(data, 0, args)) />
+                        </Template>
+                    </RadzenDataGridColumn>
+                    <RadzenDataGridColumn Title="After" TItem="Session" Width="60px" Sortable="false" Filterable="false">
+                        <Template Context="data">
+                            <RadzenCheckBox TriState="false" Value="@(data == SecondSession)"
+                                            TValue="bool" Change=@(args => OnSelect(data, 1, args)) />
+                        </Template>
+                    </RadzenDataGridColumn>
+
+                    <RadzenDataGridColumn TItem="Session" Property="BeginTime" Title="Session begin date" />
+                    <RadzenDataGridColumn TItem="Session" Property="EndTime" Title="Session end date" />
+                    <RadzenDataGridColumn TItem="Session" Property="Duration" Title="Duration" />
+                    <RadzenDataGridColumn TItem="Session" Property="BasicModality" Title="State" Type="typeof(IEnumerable<string>)"
+                                          FilterValue="@SelectedBasicModalities" FilterOperator="FilterOperator.Contains" LogicalFilterOperator="LogicalFilterOperator.Or">
+                        <FilterTemplate>
+                            <RadzenDropDown @bind-Value=@SelectedBasicModalities Style="width:100%;"
+                                            Change=@OnSelectedBasicModalitiesChange Data="@(BasicModalities)" AllowClear="true" Multiple="true" />
+                        </FilterTemplate>
+                    </RadzenDataGridColumn>
+                    <RadzenDataGridColumn TItem="Session" Property="Score" Title="Score" />
+                    <RadzenDataGridColumn TItem="Session" Property="Note" Title="My notes" />
+                </Columns>
+            </RadzenDataGrid>
+        </RadzenCard>
+    </div> 
+</div>
+
+
+@code {
+
+    private RadzenDataGrid<Session> grid;
+    List<ChartGroup> ChartsGroups { get; set; } = new List<ChartGroup>();
+    public List<SplineAreaChartData> ChartPoints { get; set; }
+
+    List<string> BasicModalities = new List<string>();
+    IEnumerable<string> SelectedBasicModalities;
+
+    private List<Session> Sessions { get => Repo.Sessions; set => Repo.Sessions = value; }
+    private List<Session> SelectedSessions = new List<Session>();
+    Session FirstSession { get => Repo.FirstSession; set => Repo.FirstSession = value; }
+
+    Session SecondSession { get => Repo.SecondSession; set => Repo.SecondSession = value; }
+
+    string firstSessionText = "not selected";
+    string secondSessionText = "not selected";
+    bool spinnerIsHidden = true;
+
+    private void OnSelectedBasicModalitiesChange(object value)
+    {
+        if (SelectedBasicModalities != null && !SelectedBasicModalities.Any())
+        {
+            SelectedBasicModalities = null;
+        }
+    }
+
+
+
+    protected override async Task OnInitializedAsync()
+    {
+        spinnerIsHidden = false;
+        await Repo.LoadSessionsAsync(Http);
+        BasicModalities.Clear();
+        BasicModalities.AddRange(Sessions.Select(x => x.BasicModality).Distinct());
+        spinnerIsHidden = true;
+    }
+
+    private async Task OnSelect(Session session, int sessNum, bool isOn)
+    {
+        try
+        {
+            if (isOn)
+            {
+                var compareSess = sessNum == 0 ? SecondSession : FirstSession;
+                if (compareSess != null)
+                {
+                    bool isValid = sessNum == 0 ? session.BeginTime < compareSess.BeginTime : session.BeginTime > compareSess.BeginTime;
+                    if (!isValid)
+                    {
+                        string message = sessNum == 0 ?
+                            "\"Before session\" date must be less than \"After session\" date!" :
+                            "\"After session\" date must be greater than \"Before session\" date!";
+                        await JsRuntime.InvokeVoidAsync("alert", message);
+                        return;
+                    }
+                }
+            }
+            if (sessNum == 0) FirstSession = isOn ? session : null;
+            else SecondSession = isOn ? session : null;
+            ChartsGroups.Clear();
+        }
+        catch (Exception ex)
+        {
+            spinnerIsHidden = true;
+            System.Diagnostics.Debug.WriteLine(ex);
+        }
+
+    }
+
+    private void OnClear()
+    {
+        FirstSession = null;
+        SecondSession = null;
+        //ChartsGroups.Clear();
+    }
+
+    private async Task FillCharts()
+    {
+        spinnerIsHidden = false;
+        await Repo.LoadSessionsData(Http);
+        spinnerIsHidden = true;
+        NavigationManager.NavigateTo("/charts");
+    }
+
+}
+
+<style>
+    #container .e-listview {
+        box-shadow: 0 1px 4px #ddd;
+        border-bottom: 1px solid #ddd;
+    }
+
+    .sample {
+        justify-content: center;
+        min-height: 280px;
+    }
+
+    .vertical-top {
+        align-items: start;
+    }
+
+    .vertical-center {
+        align-items: center;
+    }
+
+    .padding {
+        padding: 4px;
+    }
+
+    .flex {
+        display: flex;
+    }
+
+    .flex_horizontal {
+        flex-direction: row
+    }
+
+    .column1 {
+        min-width: 20%; /* The width of the column is 30% */
+        flex-direction: column;
+    }
+
+    .column2 {
+        min-width: 80%; /* The width of the column is 70% */
+        flex-direction: column;
+    }
+
+    .flex__center {
+        justify-content: center;
+    }
+
+    .margin {
+        margin: 10px;
+    }
+
+    .overflow {
+        overflow: auto;
+        width: 200px; /* Adjust as needed */
+        height: 1000px; /* Adjust as needed */
+    }
+</style>

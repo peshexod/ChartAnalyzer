@@ -1,0 +1,133 @@
+﻿@page "/charts"
+@using Chart
+@inject Repository Repo
+@inject HttpClient Http
+
+<PageTitle>Charts</PageTitle>
+
+<h1>Charts</h1>
+
+<div id="chartSection" class="row">
+    <div class="vertical-top" hidden="@(ChartsGroups.Count == 0)">
+        <div class="flex_horizontal">
+            <label style="display: inline-block; text-align: left; ">Choose state to display:</label>
+            <select class="form-select" aria-label="Default select example" @onchange="SelectedStateChanged">
+                @foreach (var mod in Modalities)
+                {
+                    <option value="@mod">@mod</option>
+                }
+            </select>
+        </div>
+
+        @foreach (var chartGroup in ChartsGroups)
+        {
+            <h2>@chartGroup.Title</h2>
+            @foreach (var chart in chartGroup.Charts)
+            {
+                <ApexChart TItem="SplineAreaChartData"
+                           Title="@chart.Title">
+                    @{
+                        int i = 0;
+                        foreach (var series in chart.Series)
+                        {
+                            string label = i == 0 ? "Before" : "After";
+                            i++;
+                            <ApexPointSeries TItem="SplineAreaChartData"
+                                             Items="@series"
+                                             SeriesType="@SeriesType.Area"
+                                             Name="@label"
+                                             XValue="@(e => e.Period)"
+                                             YValue="@(e => (decimal)Math.Round(e.Value, 2))" />
+                        }
+                    }
+                </ApexChart>
+            }
+        }
+    </div>
+</div>
+
+@code {
+    string SelectedState;
+    List<string> Modalities = new List<string>();
+    List<ChartGroup> ChartsGroups { get; set; } = new List<ChartGroup>();
+    SessionData FirstSessionData => Repo.FirstSessionData;
+    SessionData SecondSessionData => Repo.SecondSessionData;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (FirstSessionData == null) return;
+        Modalities = new List<string>(FirstSessionData.SingleData.ModalitiesData.Select(x => x.ModalityName));
+        SelectedState = Repo.FirstSession.BasicModality;
+        await Redraw();
+    }
+
+    private async Task SelectedStateChanged(ChangeEventArgs e)
+    {
+        if (e.Value is not null)
+        {
+            SelectedState = (string)e.Value;
+            await Redraw();
+        }
+    }
+
+    private async Task Redraw()
+    {
+        ChartsGroups.Clear();
+
+        await Task.Run(() =>
+        {
+            var chartsGroups = new List<ChartGroup>();
+
+            var data = FirstSessionData.SingleData;
+            //var timeStamps = data.TimeStamps;
+            //var timeStampsNew = timeStamps.Select(x => { var d = new DateTime(0, 0, 0, 0, 0, 1); return d + (x - timeStamps[0]); }).ToList();
+            var modalityData = data.ModalitiesData.FirstOrDefault(x => x.ModalityName == SelectedState);
+
+            var chartGroup = new ChartGroup();
+            chartGroup.Title = modalityData.ModalityName;
+            chartsGroups.Add(chartGroup);
+            var sessionDatas = new List<SingleSessionData>();
+            sessionDatas.Add(data);
+            if (SecondSessionData != null) sessionDatas.Add(SecondSessionData.SingleData);
+            var modalityValueTypes = modalityData.ModalityValues.Keys;
+            foreach (var valueType in modalityValueTypes)
+            {
+                var chart = new ChartVM();
+                chart.Title = valueType;
+                chartGroup.Charts.Add(chart);
+                foreach (var sessionData in sessionDatas)
+                {
+                    var modData = modalityData.Equals(sessionData.ModalitiesData) ? modalityData : sessionData.ModalitiesData.FirstOrDefault(x => x.ModalityName == modalityData.ModalityName);
+                    if (modData == null) continue;
+                    var modValues = modData.ModalityValues.ContainsKey(valueType) ? modData.ModalityValues[valueType] : null;
+                    if (modValues == null) continue;
+                    var chartSeries = new List<SplineAreaChartData>();
+                    chart.Series.Add(chartSeries);
+                    var timeStamps = sessionData.TimeStamps;
+                    int delimiter = timeStamps.Count / 50;
+                    if (delimiter == 0) delimiter = 1;
+                    List<double> cache = new();
+                    for (int i = 0; i < timeStamps.Count; i++)
+                    {
+                        if (i % delimiter == 0)
+                        {
+                            chartSeries.Add(new SplineAreaChartData
+                            {
+                                Period = DateTime.MinValue.AddSeconds(i),
+                                Value = cache.Count == 0 ? modValues[i] : cache.Average()
+                            });
+                            cache.Clear();
+                        }
+                        else
+                        {
+                            cache.Add(modValues[i]);
+                        }
+                    }
+                }
+            }
+
+            ChartsGroups = chartsGroups;
+        });
+    }
+}
+
