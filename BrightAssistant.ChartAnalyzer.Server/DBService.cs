@@ -15,7 +15,7 @@ namespace BrightAssistant.ChartAnalyzer.Server
         private Container mainContainer;
         public DBService()
 		{
-            client = new CosmosClient("AccountEndpoint=https://treebci-cosmosdb.documents.azure.com:443/;AccountKey=zBhOn4sqTjlsB6fo983GMySh1DvSKzYlRNfCjrjP8zQmBMDbi8ncEnPZhgk8bhmH3YQG1JfsKwR0ACDbPNn7nQ==;");
+            client = new CosmosClient($"AccountEndpoint={""};AccountKey={""}");
             mainContainer = mainContainer = client.GetContainer("BrightAssistantDB", "UserItems");
         }
 
